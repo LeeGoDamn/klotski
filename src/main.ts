@@ -108,6 +108,7 @@ interface GameState {
   elapsedTime: number
   timerInterval: number | null
   isWon: boolean
+  history: { blockId: string; fromRow: number; fromCol: number; toRow: number; toCol: number }[]
 }
 
 const state: GameState = {
@@ -119,6 +120,7 @@ const state: GameState = {
   elapsedTime: 0,
   timerInterval: null,
   isWon: false,
+  history: [],
 }
 
 const BOARD_COLS = 4
@@ -186,6 +188,15 @@ function canMove(blocks: Block[], blockId: string, dRow: number, dCol: number): 
   return true
 }
 
+function getMovableDirections(blocks: Block[], blockId: string): { up: boolean; down: boolean; left: boolean; right: boolean } {
+  return {
+    up: canMove(blocks, blockId, -1, 0),
+    down: canMove(blocks, blockId, 1, 0),
+    left: canMove(blocks, blockId, 0, -1),
+    right: canMove(blocks, blockId, 0, 1),
+  }
+}
+
 function checkWin(blocks: Block[]): boolean {
   const caocao = blocks.find(b => b.id === 'caocao')
   return caocao?.row === EXIT_ROW && caocao?.col === EXIT_COL
@@ -214,6 +225,10 @@ function renderGame() {
   const app = document.getElementById('app')!
   const level = LEVELS[state.levelIndex]
   const cellSize = Math.min(70, (window.innerWidth - 80) / BOARD_COLS)
+
+  // Get movable directions for selected block
+  const movableDirs = state.selectedId ? getMovableDirections(state.blocks, state.selectedId) : { up: false, down: false, left: false, right: false }
+  const hasAnyMove = movableDirs.up || movableDirs.down || movableDirs.left || movableDirs.right
 
   app.innerHTML = `
     <div class="min-h-screen p-4 md:p-8 flex flex-col items-center">
@@ -298,16 +313,36 @@ function renderGame() {
         ></div>
       </div>
 
+      <!-- Direction Controls -->
+      ${state.selectedId && hasAnyMove ? `
+        <div class="mb-6 flex flex-col items-center gap-1">
+          <button class="direction-btn ${movableDirs.up ? '' : 'opacity-30 pointer-events-none'}" data-dir="up" ${movableDirs.up ? '' : 'disabled'}>
+            ⬆️
+          </button>
+          <div class="flex gap-1">
+            <button class="direction-btn ${movableDirs.left ? '' : 'opacity-30 pointer-events-none'}" data-dir="left" ${movableDirs.left ? '' : 'disabled'}>
+              ⬅️
+            </button>
+            <div class="w-12 h-12"></div>
+            <button class="direction-btn ${movableDirs.right ? '' : 'opacity-30 pointer-events-none'}" data-dir="right" ${movableDirs.right ? '' : 'disabled'}>
+              ➡️
+            </button>
+          </div>
+          <button class="direction-btn ${movableDirs.down ? '' : 'opacity-30 pointer-events-none'}" data-dir="down" ${movableDirs.down ? '' : 'disabled'}>
+            ⬇️
+          </button>
+        </div>
+      ` : ''}
+
       <!-- Controls -->
       <div class="flex gap-3">
         <button class="btn btn-secondary" id="resetBtn">🔄 重置</button>
-        <button class="btn" id="undoBtn">↩️ 撤销</button>
+        <button class="btn ${state.history.length > 0 ? '' : 'opacity-50'}" id="undoBtn" ${state.history.length > 0 ? '' : 'disabled'}>↩️ 撤销</button>
       </div>
 
       <!-- Instructions -->
       <div class="mt-6 text-center text-gray-400 text-sm max-w-sm">
-        <p>点击方块选中，再点击方向移动</p>
-        <p class="mt-1">或使用键盘方向键</p>
+        <p>点击方块选中，然后用方向按钮或键盘移动</p>
       </div>
     </div>
 
@@ -330,7 +365,7 @@ function renderGame() {
     ` : ''}
   `
 
-  // Add event listeners
+  // Add event listeners for blocks
   document.querySelectorAll('.cell').forEach(cell => {
     cell.addEventListener('click', () => {
       const id = cell.getAttribute('data-id')!
@@ -340,6 +375,19 @@ function renderGame() {
         state.selectedId = id
       }
       renderGame()
+    })
+  })
+
+  // Direction buttons
+  document.querySelectorAll('.direction-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const dir = btn.getAttribute('data-dir')
+      switch (dir) {
+        case 'up': moveBlock(-1, 0); break
+        case 'down': moveBlock(1, 0); break
+        case 'left': moveBlock(0, -1); break
+        case 'right': moveBlock(0, 1); break
+      }
     })
   })
 
@@ -353,10 +401,7 @@ function renderGame() {
 
   document.getElementById('resetBtn')?.addEventListener('click', resetGame)
   
-  document.getElementById('undoBtn')?.addEventListener('click', () => {
-    // Simple reset for now - could implement proper undo history
-    resetGame()
-  })
+  document.getElementById('undoBtn')?.addEventListener('click', undoMove)
 
   document.getElementById('nextLevelBtn')?.addEventListener('click', () => {
     state.levelIndex = (state.levelIndex + 1) % LEVELS.length
@@ -372,6 +417,15 @@ function moveBlock(dRow: number, dCol: number) {
   if (canMove(state.blocks, state.selectedId, dRow, dCol)) {
     const block = state.blocks.find(b => b.id === state.selectedId)
     if (block) {
+      // Save to history for undo
+      state.history.push({
+        blockId: block.id,
+        fromRow: block.row,
+        fromCol: block.col,
+        toRow: block.row + dRow,
+        toCol: block.col + dCol,
+      })
+
       // Start timer on first move
       if (!state.startTime) {
         state.startTime = Date.now()
@@ -396,6 +450,19 @@ function moveBlock(dRow: number, dCol: number) {
   }
 }
 
+function undoMove() {
+  if (state.history.length === 0) return
+
+  const lastMove = state.history.pop()!
+  const block = state.blocks.find(b => b.id === lastMove.blockId)
+  if (block) {
+    block.row = lastMove.fromRow
+    block.col = lastMove.fromCol
+    state.moves--
+    renderGame()
+  }
+}
+
 function updateTimer() {
   if (state.startTime) {
     state.elapsedTime = Math.floor((Date.now() - state.startTime) / 1000)
@@ -417,6 +484,7 @@ function resetGame() {
   state.elapsedTime = 0
   state.timerInterval = null
   state.isWon = false
+  state.history = []
 
   renderGame()
 }
